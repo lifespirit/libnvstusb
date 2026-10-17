@@ -10,6 +10,7 @@ static const int nvstusb_usb_debug_level = 3;
 
 struct nvstusb_usb_device {
   struct libusb_device_handle *handle;
+  int last_error; /* Latched first bulk OUT error */
 };
 
  /* convert a libusb error to a readable string */
@@ -85,7 +86,18 @@ nvstusb_usb_get_numendpoints(
     return res;
   }
 
-  int num = cfgDesc->interface->altsetting->bNumEndpoints;
+  const struct libusb_interface_descriptor *iface =
+      &cfgDesc->interface[0].altsetting[0];
+  int num = iface->bNumEndpoints;
+
+  if (num > 0) {
+    fprintf(stderr, "nvstusb: interface 0, altsetting %u, endpoints:", iface->bAlternateSetting);
+    for (int i = 0; i < num; i++)
+      fprintf(stderr, " 0x%02x(type=%u)", iface->endpoint[i].bEndpointAddress,
+              iface->endpoint[i].bmAttributes & LIBUSB_TRANSFER_TYPE_MASK);
+    fprintf(stderr, "\n");
+  }
+
   libusb_free_config_descriptor(cfgDesc);
   fprintf(stderr, "nvstusb: Found %d endpoints...\n", num);
   return num;
@@ -175,6 +187,7 @@ nvstusb_usb_open_device(
 
   struct nvstusb_usb_device *dev = (struct nvstusb_usb_device *) malloc(sizeof(*dev));
   dev->handle = handle;
+  dev->last_error = 0;
 
   if (nvstusb_usb_needs_firmware(dev)) {
     if (nvstusb_usb_load_firmware(dev, firmware) < 0) {
@@ -185,7 +198,9 @@ nvstusb_usb_open_device(
 
     /* Firmware loading changes the USB interface; re-enumerate safely. */
     res = libusb_reset_device(dev->handle);
-    if (res < 0 && res != LIBUSB_ERROR_NO_DEVICE)
+    if (res == LIBUSB_ERROR_NOT_FOUND)
+      fprintf(stderr, "nvstusb: reset requires USB re-enumeration (expected)\n");
+    else if (res < 0 && res != LIBUSB_ERROR_NO_DEVICE)
       fprintf(stderr, "nvstusb: firmware reset: %s\n",
               libusb_error_to_string(res));
 
@@ -259,6 +274,13 @@ nvstusb_usb_close_device(
   free(dev);
 }
 
+/* First transfer error, retained so a diagnostic can stop immediately. */
+int
+nvstusb_usb_last_error(struct nvstusb_usb_device *dev)
+{
+  return dev ? dev->last_error : LIBUSB_ERROR_INVALID_PARAM;
+}
+
 /* send data to an endpoint, bulk transfer */
 int
 nvstusb_usb_write_bulk(
@@ -277,12 +299,16 @@ nvstusb_usb_write_bulk(
       dev->handle, endpoint | LIBUSB_ENDPOINT_OUT,
       (unsigned char *)data, size, &sent, 1000);
 
-  if (rc < 0 || sent != size)
+  int error = rc < 0 ? rc : (sent != size ? LIBUSB_ERROR_IO : 0);
+  if (error != 0) {
+    if (dev->last_error == 0)
+      dev->last_error = error;
     fprintf(stderr,
       "nvstusb: USB bulk OUT ep=%d rc=%d (%s) sent=%d/%d\n",
-      endpoint, rc, libusb_error_to_string(rc), sent, size);
+      endpoint, rc, libusb_error_to_string(error), sent, size);
+  }
 
-  return rc;
+  return error;
 }
 
 /* receive data from an endpoint */

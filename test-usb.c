@@ -10,10 +10,12 @@
 #include "nvstusb.h"
 
 static volatile sig_atomic_t running = 1;
+static volatile sig_atomic_t stopped_by_signal = 0;
 
 static void stop_test(int signo)
 {
     (void)signo;
+    stopped_by_signal = signo;
     running = 0;
 }
 
@@ -37,6 +39,12 @@ int main(int argc, char **argv)
     }
 
     nvstusb_set_rate(ctx, 120.0f);
+    int error = nvstusb_last_error(ctx);
+    if (error != 0) {
+        fprintf(stderr, "FAILED: initialization USB write returned %d\n", error);
+        nvstusb_deinit(ctx);
+        return EXIT_FAILURE;
+    }
     puts("3D Vision USB initialized at 120 Hz (NOT display-synchronized)");
     fflush(stdout);
 
@@ -44,8 +52,17 @@ int main(int argc, char **argv)
     struct timespec deadline;
     clock_gettime(CLOCK_MONOTONIC, &deadline);
 
+    int sent = 0;
+    int error = 0;
     for (int i = 0; i < 600 && running; ++i) {
         nvstusb_swap(ctx, (i & 1) ? nvstusb_right : nvstusb_left, NULL);
+        error = nvstusb_last_error(ctx);
+        if (error != 0) {
+            fprintf(stderr, "FAILED: shutter transfer %d/600: USB error %d\n",
+                    i + 1, error);
+            break;
+        }
+        ++sent;
 
         if ((i + 1) % 120 == 0) {
             printf("Sent %d/600 shutter commands\n", i + 1);
@@ -61,6 +78,19 @@ int main(int argc, char **argv)
     }
 
     nvstusb_deinit(ctx);
-    puts("Test finished");
+
+    if (error != 0)
+        return EXIT_FAILURE;
+    if (stopped_by_signal != 0) {
+        fprintf(stderr, "INTERRUPTED: signal %d after %d commands\n",
+                (int)stopped_by_signal, sent);
+        return 128 + (int)stopped_by_signal;
+    }
+    if (sent != 600) {
+        fprintf(stderr, "FAILED: only %d/600 commands completed\n", sent);
+        return EXIT_FAILURE;
+    }
+
+    puts("PASS: 600 shutter commands sent (not display-synchronized)");
     return EXIT_SUCCESS;
 }

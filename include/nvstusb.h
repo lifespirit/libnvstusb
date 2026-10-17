@@ -21,6 +21,8 @@ struct nvstusb_keys {
 
 struct nvstusb_context *nvstusb_init(char const * fw);
 void nvstusb_deinit(struct nvstusb_context *ctx);
+/* Returns the first USB bulk OUT error since initialization (0 on success). */
+int nvstusb_last_error(struct nvstusb_context *ctx);
 void nvstusb_set_rate(struct nvstusb_context *ctx, float rate);
 void nvstusb_swap(struct nvstusb_context *ctx, enum nvstusb_eye eye, void (*swapfunc)());
 void nvstusb_get_keys(struct nvstusb_context *ctx, struct nvstusb_keys *keys);

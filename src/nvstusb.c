@@ -170,6 +170,15 @@ nvstusb_deinit(
   free(ctx);
 }
 
+/* Expose the USB-only transfer status to diagnostic clients. */
+int
+nvstusb_last_error(struct nvstusb_context *ctx)
+{
+  assert(ctx != 0);
+  assert(ctx->device != 0);
+  return nvstusb_usb_last_error(ctx->device);
+}
+
 /* set controller refresh rate (should be monitor refresh rate) */
 void
 nvstusb_set_rate(

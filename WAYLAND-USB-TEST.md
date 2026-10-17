@@ -69,7 +69,7 @@ The program internally chooses libnvstusb's no-GLX path by setting
 commands with approximately 8.33 ms spacing. It does not open a graphical
 window or use X11. Its 120 Hz timing is not phase-locked to monitor vblank.
 
-If a run hangs or exits with USB errors, collect:
+The diagnostic exits nonzero immediately after the first failed USB OUT transfer, and does not report success when stopped by a timeout. The output includes the interface endpoint addresses.\n\nIf a run hangs or exits with USB errors, collect:
 
 ```sh
 timeout -s KILL 15s strace -f -ttt -T -yy -s 128 \
