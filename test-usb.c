@@ -39,9 +39,9 @@ int main(int argc, char **argv)
     }
 
     nvstusb_set_rate(ctx, 120.0f);
-    int error = nvstusb_last_error(ctx);
-    if (error != 0) {
-        fprintf(stderr, "FAILED: initialization USB write returned %d\n", error);
+    int init_error = nvstusb_last_error(ctx);
+    if (init_error != 0) {
+        fprintf(stderr, "FAILED: initialization USB write returned %d\n", init_error);
         nvstusb_deinit(ctx);
         return EXIT_FAILURE;
     }
