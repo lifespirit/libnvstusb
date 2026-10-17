@@ -1,0 +1,46 @@
+# NVIDIA proprietary device firmware / Windows binaries
+nvstusb.fw
+*.sys
+
+# Build/test outputs
+/test-usb
+*.log
+*.strace
+*.core
+core
+core.*
+*.bak
+*.timeout-bak
+*.o
+*.lo
+*.la
+*.so
+*.so.*
+*.a
+
+# Autotools-generated files
+autom4te.cache/
+aclocal.m4
+Makefile
+Makefile.in
+.deps/
+.libs/
+config.log
+config.status
+config.h
+config.h.in
+config.guess
+config.sub
+libtool
+ltmain.sh
+depcomp
+install-sh
+missing
+compile
+stamp-h1
+
+# Editors
+*~
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,2 @@
+# Grant the active local desktop user access to the NVIDIA 3D Vision IR emitter.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0955", ATTR{idProduct}=="0007", TAG+="uaccess"
