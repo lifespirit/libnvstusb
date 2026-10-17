@@ -123,8 +123,15 @@ nvstusb_usb_load_firmware(
     uint16_t length = (lenPos[0]<<8) | lenPos[1];
     uint16_t pos    = (lenPos[2]<<8) | lenPos[3];
   
+    if (length > sizeof(buf)) {
+      fprintf(stderr, "nvstusb: firmware record too large (%u bytes)\n", length);
+      fclose(fw);
+      return LIBUSB_ERROR_OVERFLOW;
+    }
+
     if (fread(buf, length, 1, fw) != 1) { 
-      perror(filename); 
+      perror(filename);
+      fclose(fw);
       return LIBUSB_ERROR_OTHER; 
     }
 
@@ -134,11 +141,13 @@ nvstusb_usb_load_firmware(
       0xA0, /* 'Firmware load' */
       pos, 0x0000,
       buf, length,
-      0
+      2000
     );
-    if (res < 0) {
-      fprintf(stderr, "nvstusb: Error uploading firmware... Error %d: %s\n", res, libusb_error_to_string(res));
-      return res;
+    if (res < 0 || res != length) {
+      fprintf(stderr, "nvstusb: firmware transfer failed: result=%d expected=%u (%s)\n",
+              res, length, res < 0 ? libusb_error_to_string(res) : "short write");
+      fclose(fw);
+      return res < 0 ? res : LIBUSB_ERROR_IO;
     }
   }
 
@@ -169,18 +178,70 @@ nvstusb_usb_open_device(
 
   if (nvstusb_usb_needs_firmware(dev)) {
     if (nvstusb_usb_load_firmware(dev, firmware) < 0) {
+      libusb_close(dev->handle);
       free(dev);
       return 0;
     }
-    libusb_reset_device(dev->handle);
+
+    /* Firmware loading changes the USB interface; re-enumerate safely. */
+    res = libusb_reset_device(dev->handle);
+    if (res < 0 && res != LIBUSB_ERROR_NO_DEVICE)
+      fprintf(stderr, "nvstusb: firmware reset: %s\n",
+              libusb_error_to_string(res));
+
     libusb_close(dev->handle);
-    usleep(250000);
-    handle = dev->handle = libusb_open_device_with_vid_pid(nvstusb_usb_context, 0x0955, 0x0007);
-    libusb_reset_device(dev->handle);
-    usleep(250000);
+    dev->handle = NULL;
+
+    for (int attempt = 0; attempt < 50; ++attempt) {
+      usleep(200000);
+      handle = libusb_open_device_with_vid_pid(
+          nvstusb_usb_context, 0x0955, 0x0007);
+      if (!handle)
+        continue;
+
+      if (nvstusb_usb_get_numendpoints(handle) >= 4) {
+        dev->handle = handle;
+        break;
+      }
+      libusb_close(handle);
+    }
+
+    if (!dev->handle) {
+      fprintf(stderr, "nvstusb: emitter did not reappear with firmware\n");
+      free(dev);
+      return 0;
+    }
   }
-  libusb_set_configuration(dev->handle, 1); // TODO: error checking
-  libusb_claim_interface(dev->handle, 0);   // TODO: error checking
+
+  /* Avoid reconfiguring an already active emitter on each program start. */
+  int configuration = 0;
+  res = libusb_get_configuration(dev->handle, &configuration);
+  if (res < 0) {
+    fprintf(stderr, "nvstusb: get configuration: %s\n",
+            libusb_error_to_string(res));
+    libusb_close(dev->handle);
+    free(dev);
+    return 0;
+  }
+  if (configuration != 1) {
+    res = libusb_set_configuration(dev->handle, 1);
+    if (res < 0) {
+      fprintf(stderr, "nvstusb: set configuration: %s\n",
+              libusb_error_to_string(res));
+      libusb_close(dev->handle);
+      free(dev);
+      return 0;
+    }
+  }
+
+  res = libusb_claim_interface(dev->handle, 0);
+  if (res < 0) {
+    fprintf(stderr, "nvstusb: claim interface: %s\n",
+            libusb_error_to_string(res));
+    libusb_close(dev->handle);
+    free(dev);
+    return 0;
+  }
 
   return dev;
 }
@@ -211,7 +272,17 @@ nvstusb_usb_write_bulk(
   assert(dev         != 0);
   assert(dev->handle != 0);
 
-  return libusb_bulk_transfer(dev->handle, endpoint | LIBUSB_ENDPOINT_OUT, (unsigned char*)data, size, &sent, 0);
+  /* Never allow a stalled emitter to freeze the application indefinitely. */
+  int rc = libusb_bulk_transfer(
+      dev->handle, endpoint | LIBUSB_ENDPOINT_OUT,
+      (unsigned char *)data, size, &sent, 1000);
+
+  if (rc < 0 || sent != size)
+    fprintf(stderr,
+      "nvstusb: USB bulk OUT ep=%d rc=%d (%s) sent=%d/%d\n",
+      endpoint, rc, libusb_error_to_string(rc), sent, size);
+
+  return rc;
 }
 
 /* receive data from an endpoint */
