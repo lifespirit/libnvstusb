@@ -24,9 +24,9 @@ autoreconf -fi
 ./configure --prefix=/usr
 make -j"$(nproc)"
 
-# Build the standalone USB-only test:
-gcc -O2 -Iinclude test-usb.c -Lsrc/.libs \
-  -Wl,-rpath,"$PWD/src/.libs" -lnvstusb -lm -o test-usb
+# The standalone USB test is built automatically as ./test-usb
+# Confirm libusb is linked directly into the shared library:
+readelf -d src/.libs/libnvstusb.so | grep NEEDED
 ```
 
 No `sudo make install` is needed to run `./test-usb` from the repository.
