@@ -7,6 +7,7 @@
  *   ./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=alternate
  *   ./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=left
  *   ./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=right
+ *   ./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=right --invert-eyes
  */
 #include <errno.h>
 #include <signal.h>
@@ -29,7 +30,7 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
         "Usage: %s [nvstusb.fw] [--rate=120] [--seconds=5] "
-        "[--eye=alternate|left|right]\n"
+        "[--eye=alternate|left|right] [--invert-eyes]\n"
         "The display is NOT synchronized. Observe each lens directly.\n",
         prog);
 }
@@ -41,6 +42,7 @@ int main(int argc, char **argv)
     unsigned int seconds = 5;
     enum { ALTERNATE, LEFT_ONLY, RIGHT_ONLY } mode = ALTERNATE;
     int have_firmware = 0;
+    int invert_eyes = 0;
 
     for (int a = 1; a < argc; ++a) {
         if (!strncmp(argv[a], "--rate=", 7)) {
@@ -70,6 +72,8 @@ int main(int argc, char **argv)
                 usage(argv[0]);
                 return EXIT_FAILURE;
             }
+        } else if (!strcmp(argv[a], "--invert-eyes")) {
+            invert_eyes = 1;
         } else if (!strcmp(argv[a], "--help") || !strcmp(argv[a], "-h")) {
             usage(argv[0]);
             return EXIT_SUCCESS;
@@ -108,6 +112,9 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    if (invert_eyes)
+        nvstusb_invert_eyes(ctx);
+
     if (rate > 120.0f) {
         fprintf(stderr,
             "WARNING: libnvstusb's legacy shutter timing profile has fixed "
@@ -119,9 +126,9 @@ int main(int argc, char **argv)
             : mode == RIGHT_ONLY ? "right" : "alternate";
     const int total = (int)(rate * seconds + 0.5f);
     const long period_ns = (long)(1000000000.0 / rate + 0.5);
-    printf("3D Vision USB: rate %.3f Hz, eye %s, duration %u s, "
+    printf("3D Vision USB: rate %.3f Hz, eye %s%s, duration %u s, "
            "%d commands (NOT display-synchronized)\n",
-           rate, mode_name, seconds, total);
+           rate, mode_name, invert_eyes ? " (inverted)" : "", seconds, total);
     fflush(stdout);
 
     struct timespec deadline;
@@ -132,6 +139,7 @@ int main(int argc, char **argv)
     }
 
     int sent = 0;
+    struct timespec first_send = {0, 0}, last_send = {0, 0};
     for (int i = 0; i < total && running; ++i) {
         enum nvstusb_eye eye = mode == LEFT_ONLY ? nvstusb_left
                 : mode == RIGHT_ONLY ? nvstusb_right
@@ -143,6 +151,15 @@ int main(int argc, char **argv)
                     i + 1, total, error);
             break;
         }
+        /* Timestamp successful USB submissions. This excludes the final
+         * sleep and reports observed cadence rather than nominal rate. */
+        if (clock_gettime(CLOCK_MONOTONIC, &last_send) != 0) {
+            perror("clock_gettime");
+            error = -1;
+            break;
+        }
+        if (sent == 0)
+            first_send = last_send;
         ++sent;
 
         if (sent % 120 == 0) {
@@ -170,6 +187,19 @@ int main(int argc, char **argv)
     }
 
     nvstusb_deinit(ctx);
+
+    if (sent > 1) {
+        const double elapsed = (last_send.tv_sec - first_send.tv_sec) +
+                (last_send.tv_nsec - first_send.tv_nsec) / 1e9;
+        if (elapsed > 0.0) {
+            const double actual_hz = (sent - 1) / elapsed;
+            printf("Actual USB command rate: %.2f Hz (%d commands, %.3f s)\n",
+                   actual_hz, sent, elapsed);
+            if (mode == ALTERNATE)
+                printf("Estimated per-eye repetition rate: %.2f Hz\n",
+                       actual_hz / 2.0);
+        }
+    }
 
     if (error != 0)
         return EXIT_FAILURE;
