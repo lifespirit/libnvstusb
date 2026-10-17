@@ -350,6 +350,17 @@ nvstusb_set_eye(
 }
 
 
+/* Direct, display-API-independent shutter switching. */
+int
+nvstusb_send_eye(struct nvstusb_context *ctx, enum nvstusb_eye eye)
+{
+  assert(ctx != 0);
+  assert(ctx->device != 0);
+  assert(eye == nvstusb_left || eye == nvstusb_right);
+  nvstusb_set_eye(ctx, eye);
+  return nvstusb_usb_last_error(ctx->device);
+}
+
 /* perform swap and toggle eyes hopefully with correct timing */
 void
 nvstusb_swap(

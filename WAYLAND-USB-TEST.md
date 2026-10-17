@@ -99,3 +99,12 @@ reconstructed from SourceForge SVN r36 file views. The original license and
 copyright headers have been retained; see `COPYING`.
 
 No NVIDIA firmware or Windows binaries are stored in Git.
+
+## Direct shutter API for native Wayland applications
+
+`nvstusb_send_eye(ctx, nvstusb_left | nvstusb_right)` sends a shutter
+command immediately without GLX, OpenGL buffer swaps, or the
+`__GL_SYNC_TO_VBLANK` environment workaround. The return value is the
+first latched USB OUT transfer error (0 on success). It requires successful
+`nvstusb_set_rate(ctx, refresh_rate)` first. Frame pacing and presentation
+feedback are the calling application's responsibility.
