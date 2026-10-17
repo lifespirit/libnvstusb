@@ -108,3 +108,42 @@ command immediately without GLX, OpenGL buffer swaps, or the
 first latched USB OUT transfer error (0 on success). It requires successful
 `nvstusb_set_rate(ctx, refresh_rate)` first. Frame pacing and presentation
 feedback are the calling application's responsibility.
+
+
+## Isolate the glasses from Bino (Oct 2026)
+
+The IR glasses were observed to lose shutter activation almost completely
+at 144 Hz when controlled by Bino; at 120 Hz, the two lenses appeared
+to shutter differently. **Do not attribute this to dropped video frames
+before checking the emitter itself.**
+
+The old firmware timing profile in \`src/nvstusb.c\` sets a fixed
+timer-X interval of 4.77425 ms and an active interval of 2.080 ms,
+while deriving only the frame-reload interval from \`rate\`. The sum
+(6.85425 ms) leaves about 1.479 ms inside an 8.333 ms period at 120 Hz
+but just 0.090 ms inside a 6.944 ms period at 144 Hz. These timers'
+exact firmware interpretation is partly reverse-engineered; the
+arithmetic is a clue, **not proof of a specific failure mechanism**.
+
+### Direct left/right/alternating diagnostic
+
+Rebuild after updating to the revised \`test-usb\`, then use the emitter
+directly connected to a USB port, with Bino closed:
+
+\`\`\`sh
+make -j"$(nproc)"
+./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=left
+./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=right
+./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=alternate
+\`\`\`
+
+Visually compare left and right shutter behavior independently, preferably
+recorded in slow motion. This tests USB/firmware/IR and the glasses **without
+Qt, KWin, video decoding, or frame-swap callbacks**. It does not test
+actual synchronization with monitor scanout. USB \`PASS\` only verifies
+commands reached libusb without reported OUT transfer errors; it does not
+verify emitted infrared pulses or received shutter timings.
+
+Do not chase 144/240 Hz in Bino before the 120 Hz standalone diagnostic
+is stable. Faster refresh rates need a properly measured and calibrated
+emitter shutter timing profile, not merely a different frame-rate number.
