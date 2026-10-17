@@ -9,8 +9,17 @@ Upstream: https://sourceforge.net/p/libnvstusb/code/HEAD/tree/
 
 - NVIDIA 3D Vision USB IR emitter (USB ID `0955:0007`)
 - Samsung Odyssey G7 monitor; AMD/Intel GPU; Arch Linux with KDE Wayland
-- The emitter was detected and an early USB-only test initialized at 120 Hz.
-  Glasses briefly darkened, but **stable repeated operation is not yet proven**.
+- On October 17, 2026 the USB-only test passed **four consecutive 600/600
+  bulk OUT shutter-command runs** on Arch Linux with the emitter connected
+  directly to the laptop USB port. The first run included firmware loading
+  and re-enumeration; the next three runs reused the initialized device.
+- Previously, with the emitter behind nested USB hubs, the test failed on
+  endpoint 0x01 with `LIBUSB_ERROR_IO (-1)` and timeouts. Kernel logs on the
+  problematic connection also showed USB descriptor read errors (-110)
+  and re-enumeration failures. This strongly implicates the USB connection
+  path, but the exact cause remains unknown.
+- Initial glasses darkening was observed, but **the shutter timing/IR output
+  has not been verified against a display**.
 - This USB test **does not synchronize** the shutters with rendered frames.
   SBS/OU 3D movie playback is a separate future step.
 
