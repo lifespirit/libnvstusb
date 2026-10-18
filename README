@@ -97,3 +97,66 @@ To extract the firmware simply run
 and hope everything works just fine. ;)
 
 
+
+
+USB-only diagnostics: constant cadence vs smooth frequency wave
+===============================================================
+
+The original diagnostic is still available:
+
+  ./test-usb nvstusb.fw --rate=120 --seconds=15 --eye=alternate
+
+A SECOND independent test reproduces a *varying USB command cadence*
+while leaving the monitor and firmware refresh parameters constant:
+
+  ./test-usb-wave nvstusb.fw --seconds=30 --cycle=10 --eye=alternate
+
+The default frequency is a smooth cosine wave:
+
+  t= 0s  120.0 Hz
+  t= 2.5s 117.5 Hz
+  t= 5s  115.0 Hz
+  t= 7.5s 117.5 Hz
+  t=10s  120.0 Hz
+
+It repeats three times in a 30-second run. The emitter firmware is
+programmed to 120 Hz once at startup by nvstusb_set_rate(). The test
+only varies the calls to nvstusb_send_eye() between 120 and 115 per
+second. It does NOT change the monitor refresh rate or reconfigure
+firmware timer registers throughout the test.
+
+Individual-eye diagnostic (only if needed, no glasses on):
+
+  ./test-usb-wave nvstusb.fw --seconds=15 --eye=right
+  ./test-usb-wave nvstusb.fw --seconds=15 --eye=left
+  ./test-usb-wave nvstusb.fw --seconds=15 --eye=right --invert-eyes
+
+For syntax/scheduling smoke tests without any USB device:
+
+  ./test-usb-wave --dry-run --seconds=10
+
+Supported options: --seconds (1..120), --cycle (2..120),
+--max-rate, --min-rate, --base-rate, --eye=alternate|left|right,
+--invert-eyes, --dry-run, and -h/--help.
+
+Build after the new autotools target is added:
+
+  ./autogen.sh
+  ./configure
+  make -j4
+
+The test emits CSV-like per-second statistics with target_hz,
+actual_hz, late_gt_2ms, and maximum command/scheduling lag. This
+allows comparison against the fixed-cadence test in identical
+conditions. The measured rate is **USB command cadence**, not optical
+transmission of the glasses or real display synchronization. If
+software/USB cannot keep up, the test avoids catch-up bursts and
+reports dropped deadlines. It is not a monitor/vblank simulator and
+cannot by itself prove why a particular lens flickers when actual
+video and an independent 120-Hz monitor are involved.
+
+SAFETY: Do not wear the shutter glasses during unstable-clock tests;
+observe their transmission with a camera or optical sensor instead.
+Stop the run immediately if it causes visual discomfort. The firmware
+timer/IR waveform is reverse-engineered and its actual optical
+response has not been verified.
