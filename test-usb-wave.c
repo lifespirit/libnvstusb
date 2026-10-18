@@ -182,7 +182,7 @@ int main(int argc, char **argv)
     const uint64_t stop_ns = start_ns + (uint64_t)llround(seconds * 1e9);
     uint64_t deadline_ns = start_ns;
     uint64_t report_start_ns = start_ns;
-    uint64_t prev_send_ns = 0, first_send_ns = 0, last_send_ns = 0;
+    uint64_t first_send_ns = 0, last_send_ns = 0;
     uint64_t max_lag_ns = 0, max_usb_ns = 0;
     unsigned sent = 0, window_sent = 0, late = 0, window_late = 0;
     int error = 0;
@@ -226,7 +226,6 @@ int main(int argc, char **argv)
         const uint64_t after = monotonic_ns();
         if (!after) { error = EIO; break; }
         if (!first_send_ns) first_send_ns = after;
-        prev_send_ns = last_send_ns;
         last_send_ns = after;
         ++sent;
         ++window_sent;
