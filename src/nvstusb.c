@@ -60,6 +60,11 @@ struct nvstusb_context {
   /* currently selected refresh rate */
   float rate;
 
+  /* Optional experimental NVSTUSB_EYE_TIMER_US value. -1 uses the
+   * historic rate-dependent count (1e6/rate)/1.8. This is a firmware
+   * timer parameter, NOT a measured lens opening delay. */
+  int eye_timer_us;
+
   /* currently active eye */
   enum nvstusb_eye eye;
 
@@ -102,6 +107,7 @@ nvstusb_init(char const * fw)
     return 0;
   }
   ctx->rate = 0.0;
+  ctx->eye_timer_us = -1;
   ctx->eye = 0;
   ctx->device = dev;
   ctx->vblank_method = 0;
@@ -280,6 +286,27 @@ nvstusb_set_rate(
   nvstusb_usb_write_bulk(ctx->device, 2, cmd0x1b, sizeof(cmd0x1b));
 
   ctx->rate = rate;
+  /* Do not alter legacy operation unless explicitly requested. Keep this
+   * diagnostic distinct from the USB command scheduling used by mpv. */
+  ctx->eye_timer_us = -1;
+  const char *timer_override = getenv("NVSTUSB_EYE_TIMER_US");
+  if (timer_override && *timer_override) {
+    char *end = NULL;
+    errno = 0;
+    long value = strtol(timer_override, &end, 10);
+    int frame_us = (int)(1000000.0 / rate);
+    if (!errno && end != timer_override && *end == '\0' &&
+        value >= 500 && value <= frame_us - 500) {
+      ctx->eye_timer_us = (int)value;
+      fprintf(stderr, "nvstusb: EXPERIMENTAL eye command timer=%d us "
+              "(frame=%d us; optical phase UNCALIBRATED)\n",
+              ctx->eye_timer_us, frame_us);
+    } else {
+      fprintf(stderr, "nvstusb: invalid NVSTUSB_EYE_TIMER_US='%s' "
+              "(allowed 500..%d for %.3fHz); using unmodified timer\n",
+              timer_override, frame_us - 500, rate);
+    }
+  }
 }
 
 void
@@ -324,7 +351,8 @@ nvstusb_set_eye(
     printf("r:%08x %d %lld %lld\n",r, r,NVSTUSB_T0_US(r), NVSTUSB_T2_US(r));
   }
 #else
-  r = NVSTUSB_T2_COUNT((1e6/ctx->rate)/1.8);
+  r = NVSTUSB_T2_COUNT(ctx->eye_timer_us >= 0 ?
+                         ctx->eye_timer_us : (1e6/ctx->rate)/1.8);
 #endif
 
   switch(eye) {
