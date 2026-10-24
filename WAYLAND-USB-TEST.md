@@ -147,3 +147,75 @@ verify emitted infrared pulses or received shutter timings.
 Do not chase 144/240 Hz in Bino before the 120 Hz standalone diagnostic
 is stable. Faster refresh rates need a properly measured and calibrated
 emitter shutter timing profile, not merely a different frame-rate number.
+
+
+## Experimental firmware eye timer override for optical calibration (2026-10-25)
+
+**Branch:** `feature/usb-eye-timer-calibration`; opt-in, unverified
+against actual lens waveform. Default behavior remains unchanged.
+
+Native DRM 3D playback at 120 Hz with 100% confirmed KMS
+flips and 100% successful `nvstusb_send_eye()` USB
+bulk transfers can still display a screen-height-dependent
+L/R leakage stripe through the glasses. On one tested LCD
+the user observed three run-to-run states: apparently
+correct, a small contaminated region at the top, or
+approximately half the vertical image affected. The
+hardware refreshes a raster from top to bottom while
+both shutters act globally; variable emitter firmware
+timing, shutter acquisition phase, LCD pixel response
+and scanout position must be investigated, not inferred
+from USB transport success.
+
+The existing `nvstusb_set_eye()` encodes its fourth
+argument as a 32-bit Timer-2 reload field:
+
+```c
+r = NVSTUSB_T2_COUNT((1e6 / ctx->rate) / 1.8);
+```
+
+At 120Hz this is a **nominal 4629.63 µs** timer
+parameter encoded at 12 MHz; this is *not* proof that
+the lens opens at 4629.63µs. Its actual meaning inside
+the proprietary firmware is only partially documented.
+The separate fixed `nvstusb_set_rate()` waveform
+profile, including a 4774.25µs timer and a 2080µs
+active interval, is *not* modified by this option.
+
+Use `NVSTUSB_EYE_TIMER_US` to A/B sweep just this
+one command parameter:
+
+```sh
+git fetch origin feature/usb-eye-timer-calibration
+git switch feature/usb-eye-timer-calibration
+# or git switch --track origin/feature/usb-eye-timer-calibration
+make -j"$(nproc)"
+
+# mpv dynamically loads THIS freshly built .so:
+NVSTUSB_EYE_TIMER_US=3500 \
+MPV_DRM_STEREO_USB_LIBRARY=/absolute/path/to/libnvstusb/src/.libs/libnvstusb.so \
+... ./build/mpv --drm-stereo-3d=yes ...
+```
+
+The allowed range is 500µs through `(1000000/rate)-500`
+µs (at 120Hz, 500..7833). Invalid values warn and
+preserve the original timer. If the variable is unset,
+the original rate-based formula is used exactly.
+Suggested *diagnostic only* values are 3500, 4500
+and 5500µs, with several **independent** launches for
+each and no other phase / inversion / display settings
+changed. Observe through lenses with a camera or optical
+sensor, not by wearing them during calibration. The
+library prints the requested/accepted setting to stderr;
+it does not establish IR or optical delivery timing.
+
+If the vertical boundary moves predictably with the
+parameter, the firmware command timer contributes to
+optical phase. If runs with the exact same parameter
+still show substantially different phase, investigate
+independent firmware/receiver acquisition, clocks,
+command-to-IR conversion and LCD response. A constant
+timer value cannot necessarily fix a run-to-run
+acquisition or phase-locking problem. Never compensate
+an unknown display-to-lens offset by blocking the
+real-time KMS page-flip thread.
