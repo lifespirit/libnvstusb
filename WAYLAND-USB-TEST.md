@@ -257,3 +257,40 @@ Stereo USB: verified firmware eye timer=3500 us (requested=3500, phase NOT optic
 Rebuild the library and mpv, point mpv explicitly
 to this branch's rebuilt `.so`, then repeat
 optical tests with interleaved timer values.
+
+
+## Manual timing adjustment while native DRM 3D is playing
+
+The calibration branch now offers two closely related functions:
+
+```c
+int nvstusb_effective_eye_timer_us(struct nvstusb_context *ctx);
+int nvstusb_set_eye_timer_us(struct nvstusb_context *ctx, int us);
+```
+
+The setter accepts integer 500us .. `floor(1000000/refreshHz)-500`
+(500..7833 at 120Hz), returns 0 or negative errno on failure, and
+affects the timer encoded in the **next** `NVSTUSB_CMD_SET_EYE`
+USB packet. It does **not** upload firmware, reset device state,
+change refresh rate, recalculate the fixed waveform
+`activeTime=2080us`, alter mpv KMS/vblank, or measure lens
+transmission timing. The caller must serialize changes with
+`nvstusb_send_eye` in the same USB owner thread.
+
+The corresponding opt-in mpv feature
+`MPV_DRM_STEREO_USB_CONTROL=1` creates a private 0600 FIFO
+in `XDG_RUNTIME_DIR`, accepts `get`, `+N`, `-N`, and
+`set N` commands, and logs each effective setting with a
+timestamp. The sample `TOOLS/drm-stereo-usb-input.conf`
+binds Alt+arrows so that the viewer can experimentally
+move the horizontal cross-talk band **without restarting**
+the player. The lib still defaults to the historic
+`(1000000/rate)/1.8` timer when no env override or
+runtime setting is provided. No opt-in calibration means
+no modified timing behavior.
+
+Automation is a *separate* task: without an optical
+measurement of the actual lens transmission, neither
+a confirmed KMS page flip nor successful libusb transfer
+can tell the host which firmware timer value aligns
+the LCD and shutter waveforms best.
