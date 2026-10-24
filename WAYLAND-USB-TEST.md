@@ -219,3 +219,41 @@ timer value cannot necessarily fix a run-to-run
 acquisition or phase-locking problem. Never compensate
 an unknown display-to-lens offset by blocking the
 real-time KMS page-flip thread.
+
+
+### Effective timer verification after four 3500us optical runs
+
+Four launches with `NVSTUSB_EYE_TIMER_US=3500` on the target
+i915 120Hz display produced widely varying optical
+boundary locations while all KMS flip and USB OUT
+commands succeeded, with zero losses. This demonstrates
+that the timer alone does not give reproducible
+optical phase across launches. The mpv log showed
+the requested env value but did not yet verify
+what the loaded `libnvstusb.so` actually accepted.
+
+This calibration branch now exports:
+
+```c
+int nvstusb_effective_eye_timer_us(struct nvstusb_context *ctx);
+```
+
+This returns the actual command timer field in
+integer microseconds selected by the library after
+`nvstusb_set_rate`. Without override, it returns the
+legacy formula (rate-based); before set-rate it
+returns -1. **This is a code-level readback, NOT
+a measurement of USB-to-IR delay or lens open time.**
+
+On the updated mpv branch, requesting an override
+requires this getter and fails VO init rather than
+silently using a different/older library. The log
+must contain:
+
+```text
+Stereo USB: verified firmware eye timer=3500 us (requested=3500, phase NOT optically calibrated)
+```
+
+Rebuild the library and mpv, point mpv explicitly
+to this branch's rebuilt `.so`, then repeat
+optical tests with interleaved timer values.
