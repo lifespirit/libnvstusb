@@ -28,6 +28,11 @@ void nvstusb_set_rate(struct nvstusb_context *ctx, float rate);
  * eye. This does NOT measure physical IR emission/lens latency. Returns -1
  * if the refresh rate has not yet been configured. */
 int nvstusb_effective_eye_timer_us(struct nvstusb_context *ctx);
+/* Modify the per-eye firmware command timer at runtime without reloading
+ * firmware or changing display/vblank scheduling. Caller must serialize
+ * with nvstusb_send_eye (same USB owner thread). Returns 0 on success,
+ * negative errno-style code otherwise. This does NOT calibrate lens phase. */
+int nvstusb_set_eye_timer_us(struct nvstusb_context *ctx, int timer_us);
 /* Send a shutter command directly, without using any GLX/VBlank method.
  * Intended for external presentation schedulers (Wayland, etc.).
  * Returns 0 on success or a negative libusb error.

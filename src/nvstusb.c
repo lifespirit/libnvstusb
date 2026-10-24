@@ -321,6 +321,23 @@ nvstusb_effective_eye_timer_us(struct nvstusb_context *ctx)
            (int)((1000000.0 / ctx->rate) / 1.8);
 }
 
+int
+nvstusb_set_eye_timer_us(struct nvstusb_context *ctx, int timer_us)
+{
+  if (!ctx || ctx->rate <= 60)
+    return -EINVAL;
+  int frame_us = (int)(1000000.0 / ctx->rate);
+  if (timer_us < 500 || timer_us > frame_us - 500)
+    return -ERANGE;
+  /* The caller owns this context and must not call this concurrently
+   * with nvstusb_send_eye(). Only future eye packets use the new timer. */
+  ctx->eye_timer_us = timer_us;
+  fprintf(stderr, "nvstusb: runtime eye command timer=%d us "
+          "(frame=%d us; optical phase NOT verified)\n",
+          ctx->eye_timer_us, frame_us);
+  return 0;
+}
+
 void
 nvstusb_invert_eyes(
     struct nvstusb_context *ctx
