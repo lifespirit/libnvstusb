@@ -309,6 +309,18 @@ nvstusb_set_rate(
   }
 }
 
+/* Readback of the actual command timer selected by nvstusb_set_rate().
+ * A separate mpv caller can require this API to verify that its requested
+ * experiment did not inadvertently load an older .so with no override. */
+int
+nvstusb_effective_eye_timer_us(struct nvstusb_context *ctx)
+{
+  if (!ctx || ctx->rate <= 60)
+    return -1;
+  return ctx->eye_timer_us >= 0 ? ctx->eye_timer_us :
+           (int)((1000000.0 / ctx->rate) / 1.8);
+}
+
 void
 nvstusb_invert_eyes(
     struct nvstusb_context *ctx

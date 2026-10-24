@@ -24,6 +24,10 @@ void nvstusb_deinit(struct nvstusb_context *ctx);
 /* Returns the first USB bulk OUT error since initialization (0 on success). */
 int nvstusb_last_error(struct nvstusb_context *ctx);
 void nvstusb_set_rate(struct nvstusb_context *ctx, float rate);
+/* Effective integer Timer-2 command parameter (microseconds) sent for each
+ * eye. This does NOT measure physical IR emission/lens latency. Returns -1
+ * if the refresh rate has not yet been configured. */
+int nvstusb_effective_eye_timer_us(struct nvstusb_context *ctx);
 /* Send a shutter command directly, without using any GLX/VBlank method.
  * Intended for external presentation schedulers (Wayland, etc.).
  * Returns 0 on success or a negative libusb error.
