@@ -1,3 +1,5 @@
+AUTOMAKE_OPTIONS = subdir-objects
+
 SUBDIRS = src tools
 
 # Build the USB-only shutter diagnostic without manual compiler flags.
