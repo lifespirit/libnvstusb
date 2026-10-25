@@ -2,6 +2,12 @@ SUBDIRS = src tools
 
 # Build the USB-only shutter diagnostic without manual compiler flags.
 noinst_PROGRAMS = test-usb test-usb-wave
+check_PROGRAMS = test-frame-timer
+TESTS = test-frame-timer
+
+test_frame_timer_SOURCES = tests/test-frame-timer.c
+test_frame_timer_CPPFLAGS = -I$(srcdir)/include
+test_frame_timer_LDADD = -lm
 test_usb_SOURCES = test-usb.c
 test_usb_CPPFLAGS = -I$(srcdir)/include
 test_usb_LDADD = src/libnvstusb.la -lm
