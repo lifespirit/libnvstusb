@@ -24,6 +24,7 @@
 #include <GL/glext.h>
 
 #include "nvstusb.h"
+#include "nvstusb_timing.h"
 #include "usb.h"
 
 static PFNGLXGETVIDEOSYNCSGIPROC glXGetVideoSyncSGI = NULL;
@@ -198,13 +199,42 @@ nvstusb_set_rate(
   /* send some magic data to device, this function is mainly black magic */
 
   /* some timing voodoo */
-  int32_t frameTime   = (1000000.0/rate);     /* 8.33333 ms if 120 Hz */
   int32_t activeTime  = 2080;                 /* 2.08000 ms time each eye is on*/
 
   int32_t w = NVSTUSB_T2_COUNT(4568.50);      /* 4.56800 ms */
   int32_t x = NVSTUSB_T0_COUNT(4774.25);      /* 4.77425 ms */
   int32_t y = NVSTUSB_T0_COUNT(activeTime);
-  int32_t z = NVSTUSB_T2_COUNT(frameTime);    
+
+  /* A/B experiment only. The historic formula truncates the physical
+   * period to integer microseconds BEFORE converting to 12 MHz ticks.
+   * The exact formula rounds once to a whole timer tick instead.
+   *
+   * This register controls an internal timer but we have NOT established
+   * whether SET_EYE commands reset its phase. Therefore the calculated
+   * microseconds/second error is a model, not measured optical drift. */
+  int32_t legacy_z = nvstusb_frame_reload_legacy(rate);
+  int32_t exact_z = nvstusb_frame_reload_exact(rate);
+  int use_exact = 0;
+  const char *exact_env = getenv("NVSTUSB_FRAME_TIMER_EXACT");
+  if (exact_env && strcmp(exact_env, "1") == 0)
+    use_exact = 1;
+  else if (exact_env && strcmp(exact_env, "0") != 0)
+    fprintf(stderr, "nvstusb: invalid NVSTUSB_FRAME_TIMER_EXACT='%s' "
+            "(expected 0 or 1; using legacy timer)\n", exact_env);
+  int32_t z = use_exact ? exact_z : legacy_z;
+  double target_us = 1000000.0 / rate;
+  double legacy_us = nvstusb_frame_reload_period_us(legacy_z);
+  double exact_us = nvstusb_frame_reload_period_us(exact_z);
+  fprintf(stderr, "nvstusb: T2 frame reload: mode=%s rate=%.6fHz "
+          "target=%.6fus legacy=%.6fus exact=%.6fus "
+          "selected_ticks=%lld legacy_model_drift=%.3fus/s "
+          "exact_model_drift=%.3fus/s "
+          "(nominal 12MHz, not measured IR)\n",
+          use_exact ? "exact" : "legacy", (double)rate, target_us,
+          legacy_us, exact_us, (long long)(1 - (int64_t)z),
+          (legacy_us - target_us) * rate,
+          (exact_us - target_us) * rate);
+
 
   uint8_t cmdTimings[] = { 
     NVSTUSB_CMD_WRITE,      /* write data */
