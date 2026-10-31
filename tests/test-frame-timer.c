@@ -28,6 +28,20 @@ static int check(float rate)
                 (double)rate);
         return 1;
     }
+    // One signed tick of trim must change only the reload, by exactly
+    // 1 / 12MHz (83.333ns), regardless of frame rate.
+    const int32_t minus1 = nvstusb_frame_reload_trim_ticks(exact, -1);
+    const int32_t plus1 = nvstusb_frame_reload_trim_ticks(exact, 1);
+    const double tick_us = 1e6 / (double)NVSTUSB_TIMER2_HZ;
+    if (minus1 != exact + 1 || plus1 != exact - 1 ||
+        fabs(nvstusb_frame_reload_period_us(minus1) -
+             (exact_us - tick_us)) > 1e-8 ||
+        fabs(nvstusb_frame_reload_period_us(plus1) -
+             (exact_us + tick_us)) > 1e-8) {
+        fprintf(stderr, "FAIL rate=%.8fHz signed timer tick trim\n",
+                (double)rate);
+        return 1;
+    }
     printf("rate=%.6fHz legacy_ticks=%lld exact_ticks=%lld "
            "target_us=%.6f legacy_us=%.6f exact_us=%.6f "
            "legacy_model_drift_us_s=%+.3f exact_model_drift_us_s=%+.3f\n",
