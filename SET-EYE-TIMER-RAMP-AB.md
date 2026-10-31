@@ -76,6 +76,72 @@ testing the system-wide older version:
 export MPV_DRM_STEREO_USB_LIBRARY="$HOME/Projects/src/libnvstusb/src/.libs/libnvstusb.so"
 ```
 
+## Same-run step A/B: isolate initial-phase variability
+
+Fixed-r restarts gave 4129us -> ~2:20–2:30 and 5129us ->
+~2:00–2:10 to lose the 0% mark, comparable to the 4629us control
+(~2:20), despite the previous *ramping* experiments showing larger
+differences. Because starting phase and timer origin vary across restarts,
+the earlier results do not establish an optical phase correction.
+
+An opt-in same-run diagnostic changes the command's **r** value
+without restarting mpv or reinitializing the transmitter:
+
+```sh
+export NVSTUSB_EYE_TIMER_STEP_US=500
+export NVSTUSB_EYE_TIMER_STEP_SECONDS=20
+unset NVSTUSB_EYE_TIMER_RAMP_US_PER_S
+unset NVSTUSB_EYE_TIMER_US
+unset MPV_DRM_STEREO_USB_FIXED_EYE_TIMER_TEST
+
+export NVSTUSB_FRAME_TIMER_EXACT=1
+export NVSTUSB_FRAME_TIMER_TICK_BIAS=0
+export MPV_DRM_STEREO_USB_PHASE_SCHED=1
+export MPV_DRM_STEREO_USB_PHASE_US=0
+export MPV_DRM_STEREO_USB_DRIFT_US_PER_S=0
+```
+
+The `r` base in mpv predicted-MSC mode remains 4629us. Each interval
+starts at the **first actual USB SET_EYE call**, not from mpv startup;
+all slots last exactly 20s as measured with CLOCK_MONOTONIC.
+The five-slot sequence then repeats:
+
+| Time since first command | r (us) | Phase |
+| --- | ---: | --- |
+| 0–20 s | 4629 | baseline |
+| 20–40 s | 4129 | -500 |
+| 40–60 s | 4629 | baseline |
+| 60–80 s | 5129 | +500 |
+| 80–100 s | 4629 | baseline |
+| 100–120 s | 4629 | repeat baseline |
+| 120–140 s | 4129 | repeat -500 |
+
+Use the same `MPV_DRM_STEREO_USB_LIBRARY` and
+`MPV_DRM_STEREO_USB_FIRMWARE` as prior tests and save library stderr
+separately. Observe whether the **boundary moves abruptly at 20s,
+40s, 60s and 80s** and whether it returns near its previous position.
+Do not use *time until the 0% marker disappears* as the main endpoint.
+Even a visually negative outcome is useful evidence.
+
+A single setup-time diagnostic
+`nvstusb: SET_EYE step A/B: enabled base_us=4629.000 step_us=500 slot_seconds=20 ...`
+confirms the mode. On shutdown,
+`nvstusb: SET_EYE step A/B final ... packets=... transitions=... final_slot=...`
+confirms execution. There are no logs or file writes per USB command.
+
+`NVSTUSB_EYE_TIMER_STEP_US` accepts integer 0..500 (default 0/off);
+`NVSTUSB_EYE_TIMER_STEP_SECONDS` accepts integer 5..60 (default 20).
+The pure functions are covered by `make check`.
+A nonzero per-command ramp takes precedence: if both the ramp and
+step mode are requested the step mode is rejected with a warning.
+The sequence only changes SET_EYE command parameter r, not startup
+firmware frame reload z, host deadlines or KMS scanout.
+
+IMPORTANT: `Stereo USB scheduler final fixed_eye_timer_us=4629`
+continues to show the BASE readback: it cannot describe per-command
+step values. This experiment is **not** measured IR and should not
+be used as a long-movie configuration.
+
 ## A/B experiment (NO host phase drift)
 
 Keep mpv at the existing known DRM/native-stereo startup options.
