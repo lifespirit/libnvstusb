@@ -59,7 +59,7 @@ int main(void)
         const double expected[] = {4629, 4129, 4629, 5129, 4629};
         int64_t t = (int64_t)k * window_s * ns;
         if (nvstusb_eye_timer_step_slot(t, window_s) != k) {
-            fprintf(stderr, "FAIL: SET_EYE step slot at %d s\\n",
+            fprintf(stderr, "FAIL: SET_EYE step slot at %d s\n",
                     k * (int)window_s);
             return EXIT_FAILURE;
         }
