@@ -24,8 +24,10 @@ void nvstusb_deinit(struct nvstusb_context *ctx);
 /* Returns the first USB bulk OUT error since initialization (0 on success). */
 int nvstusb_last_error(struct nvstusb_context *ctx);
 void nvstusb_set_rate(struct nvstusb_context *ctx, float rate);
-/* Effective integer Timer-2 command parameter (microseconds) sent for each
- * eye. This does NOT measure physical IR emission/lens latency. Returns -1
+/* The configured BASE integer Timer-2 command parameter (microseconds).
+ * With NVSTUSB_EYE_TIMER_RAMP_US_PER_S enabled, subsequent SET_EYE
+ * packets can differ from this value as CLOCK_MONOTONIC advances.
+ * This does NOT measure physical IR emission/lens latency. Returns -1
  * if the refresh rate has not yet been configured. */
 int nvstusb_effective_eye_timer_us(struct nvstusb_context *ctx);
 /* Modify the per-eye firmware command timer at runtime without reloading
