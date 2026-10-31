@@ -49,6 +49,40 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    puts("PASS: bounded per-SET_EYE command timer ramp and register encoding");
+    /* In a single continuous run: baseline, -500, baseline, +500,
+     * baseline; then repeat. Boundary checks must be half-open. */
+    const int64_t ns = INT64_C(1000000000);
+    const unsigned window_s = 20;
+    const double step_base = 4629.0;
+    const double step_delta = 500.0;
+    for (int k = 0; k < 5; k++) {
+        const double expected[] = {4629, 4129, 4629, 5129, 4629};
+        int64_t t = (int64_t)k * window_s * ns;
+        if (nvstusb_eye_timer_step_slot(t, window_s) != k) {
+            fprintf(stderr, "FAIL: SET_EYE step slot at %d s\\n",
+                    k * (int)window_s);
+            return EXIT_FAILURE;
+        }
+        near(nvstusb_eye_timer_step_us(step_base, t,
+                                      step_delta, window_s, frame),
+             expected[k], "step A/B boundary");
+        near(nvstusb_eye_timer_step_us(step_base, t + window_s * ns - 1,
+                                      step_delta, window_s, frame),
+             expected[k], "step A/B held value");
+    }
+    near(nvstusb_eye_timer_step_us(step_base, 100 * ns, step_delta,
+                                  window_s, frame),
+         step_base, "step A/B repeat at 100 s");
+    near(nvstusb_eye_timer_step_us(step_base, 120 * ns, step_delta,
+                                  window_s, frame),
+         step_base - step_delta, "step A/B repeat negative at 120 s");
+    near(nvstusb_eye_timer_step_us(step_base, -10, step_delta,
+                                  window_s, frame),
+         step_base, "step A/B negative time");
+    near(nvstusb_eye_timer_step_us(520.0, 20 * ns, step_delta,
+                                  window_s, frame),
+         500.0, "step A/B lower bound");
+
+    puts("PASS: bounded per-SET_EYE command timer ramp, step sequence and register encoding");
     return EXIT_SUCCESS;
 }
