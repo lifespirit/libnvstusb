@@ -34,6 +34,16 @@ static inline int32_t nvstusb_frame_reload_exact(float rate)
     return (int32_t)(1 - ticks);
 }
 
+/* A signed diagnostic trim in whole 12MHz ticks. Positive values lengthen
+ * the timer period, negative values shorten it. This DOES NOT change
+ * the selected-eye command timing, and makes no claim that the device
+ * oscillator really operates at its nominal clock. */
+static inline int32_t nvstusb_frame_reload_trim_ticks(int32_t reload,
+                                                       int tick_bias)
+{
+    return (int32_t)((int64_t)reload - tick_bias);
+}
+
 static inline double nvstusb_frame_reload_period_us(int32_t reload)
 {
     return (double)(INT64_C(1) - reload) * 1000000.0 /
