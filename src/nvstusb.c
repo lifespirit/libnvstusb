@@ -221,19 +221,48 @@ nvstusb_set_rate(
   else if (exact_env && strcmp(exact_env, "0") != 0)
     fprintf(stderr, "nvstusb: invalid NVSTUSB_FRAME_TIMER_EXACT='%s' "
             "(expected 0 or 1; using legacy timer)\n", exact_env);
-  int32_t z = use_exact ? exact_z : legacy_z;
+  int tick_bias = 0;
+  const char *trim_env = getenv("NVSTUSB_FRAME_TIMER_TICK_BIAS");
+  if (trim_env && *trim_env) {
+    char *end = NULL;
+    errno = 0;
+    long parsed = strtol(trim_env, &end, 10);
+    if (errno || end == trim_env || *end != '\0' ||
+        parsed < -2 || parsed > 2) {
+      fprintf(stderr, "nvstusb: invalid NVSTUSB_FRAME_TIMER_TICK_BIAS='%s' "
+              "(allowed -2..2; using 0)\n", trim_env);
+    } else if (!use_exact && parsed) {
+      fprintf(stderr, "nvstusb: NVSTUSB_FRAME_TIMER_TICK_BIAS requires "
+              "NVSTUSB_FRAME_TIMER_EXACT=1; ignoring %+ld\n", parsed);
+    } else {
+      tick_bias = (int)parsed;
+    }
+  }
+
+  /* This is intentionally STATIC for the entire run. A one-tick trim
+   * changes the nominal independent Timer 2 period by 83.333 ns, or
+   * approximately 10us/s at 120Hz. It cannot re-synchronize a drifting
+   * emitter or an independent receiver by itself; the experiment tests
+   * whether changing this reload affects the observed optical slope. */
+  int32_t z = use_exact
+    ? nvstusb_frame_reload_trim_ticks(exact_z, tick_bias) : legacy_z;
   double target_us = 1000000.0 / rate;
   double legacy_us = nvstusb_frame_reload_period_us(legacy_z);
   double exact_us = nvstusb_frame_reload_period_us(exact_z);
+  double selected_us = nvstusb_frame_reload_period_us(z);
   fprintf(stderr, "nvstusb: T2 frame reload: mode=%s rate=%.6fHz "
           "target=%.6fus legacy=%.6fus exact=%.6fus "
-          "selected_ticks=%lld legacy_model_drift=%.3fus/s "
-          "exact_model_drift=%.3fus/s "
+          "tick_bias=%+d selected_ticks=%lld selected=%.6fus "
+          "legacy_model_drift=%+.3fus/s "
+          "exact_model_drift=%+.3fus/s "
+          "selected_model_drift=%+.3fus/s "
           "(nominal 12MHz, not measured IR)\n",
           use_exact ? "exact" : "legacy", (double)rate, target_us,
-          legacy_us, exact_us, (long long)(1 - (int64_t)z),
+          legacy_us, exact_us, tick_bias,
+          (long long)(1 - (int64_t)z), selected_us,
           (legacy_us - target_us) * rate,
-          (exact_us - target_us) * rate);
+          (exact_us - target_us) * rate,
+          (selected_us - target_us) * rate);
 
 
   uint8_t cmdTimings[] = { 
