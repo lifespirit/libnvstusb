@@ -25,6 +25,7 @@
 
 #include "nvstusb.h"
 #include "nvstusb_timing.h"
+#include "nvstusb_eye_timer_ramp.h"
 #include "usb.h"
 
 static PFNGLXGETVIDEOSYNCSGIPROC glXGetVideoSyncSGI = NULL;
@@ -65,6 +66,17 @@ struct nvstusb_context {
    * historic rate-dependent count (1e6/rate)/1.8. This is a firmware
    * timer parameter, NOT a measured lens opening delay. */
   int eye_timer_us;
+
+  /* Optional diagnostic only: vary SET_EYE's 32-bit T2 command count over
+   * monotonic time. Distinct from the startup frame reload at 0x201b.
+   * Only the USB owner thread mutates state after rate configuration. */
+  double eye_timer_ramp_rate_us_per_s;
+  double eye_timer_ramp_limit_us;
+  int64_t eye_timer_ramp_start_ns;
+  int eye_timer_ramp_started;
+  uint64_t eye_timer_ramp_packets;
+  double eye_timer_ramp_last_us;
+  int eye_timer_ramp_limit_reached;
 
   /* currently active eye */
   enum nvstusb_eye eye;
@@ -109,6 +121,13 @@ nvstusb_init(char const * fw)
   }
   ctx->rate = 0.0;
   ctx->eye_timer_us = -1;
+  ctx->eye_timer_ramp_rate_us_per_s = 0.0;
+  ctx->eye_timer_ramp_limit_us = 500.0;
+  ctx->eye_timer_ramp_start_ns = 0;
+  ctx->eye_timer_ramp_started = 0;
+  ctx->eye_timer_ramp_packets = 0;
+  ctx->eye_timer_ramp_last_us = 0.0;
+  ctx->eye_timer_ramp_limit_reached = 0;
   ctx->eye = 0;
   ctx->device = dev;
   ctx->vblank_method = 0;
@@ -163,6 +182,21 @@ nvstusb_deinit(
   /* Close thread if running */
   if(ctx->b_thread_running) {
     nvstusb_stop_stereo_thread(ctx);
+  }
+
+  /* Report only AFTER streaming has stopped, never from the real-time
+   * USB sender loop. No periodic logging, file writes, or printf on send. */
+  if (ctx->eye_timer_ramp_rate_us_per_s != 0.0) {
+    double base = ctx->eye_timer_us >= 0 ? ctx->eye_timer_us :
+                  (1e6 / ctx->rate) / 1.8;
+    fprintf(stderr, "nvstusb: SET_EYE ramp final: "
+            "base_us=%.3f rate_us_per_s=%+.3f limit_us=%.1f "
+            "packets=%llu last_us=%.3f clamped=%d "
+            "(command timer only; NOT measured optical phase)\n",
+            base, ctx->eye_timer_ramp_rate_us_per_s,
+            ctx->eye_timer_ramp_limit_us,
+            (unsigned long long)ctx->eye_timer_ramp_packets,
+            ctx->eye_timer_ramp_last_us, ctx->eye_timer_ramp_limit_reached);
   }
 
   /* close device */
@@ -347,6 +381,13 @@ nvstusb_set_rate(
   ctx->rate = rate;
   /* Do not alter legacy operation unless explicitly requested. Keep this
    * diagnostic distinct from the USB command scheduling used by mpv. */
+  ctx->eye_timer_ramp_rate_us_per_s = 0.0;
+  ctx->eye_timer_ramp_limit_us = 500.0;
+  ctx->eye_timer_ramp_start_ns = 0;
+  ctx->eye_timer_ramp_started = 0;
+  ctx->eye_timer_ramp_packets = 0;
+  ctx->eye_timer_ramp_last_us = 0.0;
+  ctx->eye_timer_ramp_limit_reached = 0;
   ctx->eye_timer_us = -1;
   const char *timer_override = getenv("NVSTUSB_EYE_TIMER_US");
   if (timer_override && *timer_override) {
@@ -364,6 +405,45 @@ nvstusb_set_rate(
       fprintf(stderr, "nvstusb: invalid NVSTUSB_EYE_TIMER_US='%s' "
               "(allowed 500..%d for %.3fHz); using unmodified timer\n",
               timer_override, frame_us - 500, rate);
+    }
+  }
+
+  /* Firmware-aware experiment: vary ONLY SET_EYE bytes [4..7]. The
+   * separate NVSTUSB_FRAME_TIMER_TICK_BIAS still controls 0x201b at
+   * initialization. Default: no ramp and byte-identical legacy packets. */
+  const char *limit_env = getenv("NVSTUSB_EYE_TIMER_RAMP_LIMIT_US");
+  if (limit_env && *limit_env) {
+    char *end = NULL;
+    errno = 0;
+    double limit = strtod(limit_env, &end);
+    if (!errno && end != limit_env && *end == '\0' &&
+        isfinite(limit) && limit >= 1.0 && limit <= 2000.0) {
+      ctx->eye_timer_ramp_limit_us = limit;
+    } else {
+      fprintf(stderr, "nvstusb: invalid NVSTUSB_EYE_TIMER_RAMP_LIMIT_US='%s' "
+              "(allowed 1..2000; using 500)\n", limit_env);
+    }
+  }
+  const char *ramp_env = getenv("NVSTUSB_EYE_TIMER_RAMP_US_PER_S");
+  if (ramp_env && *ramp_env) {
+    char *end = NULL;
+    errno = 0;
+    double rate_us_s = strtod(ramp_env, &end);
+    if (!errno && end != ramp_env && *end == '\0' &&
+        isfinite(rate_us_s) && fabs(rate_us_s) <= 20.0) {
+      ctx->eye_timer_ramp_rate_us_per_s = rate_us_s;
+      if (rate_us_s != 0.0) {
+        double base = ctx->eye_timer_us >= 0 ? ctx->eye_timer_us :
+                      (1e6 / ctx->rate) / 1.8;
+        fprintf(stderr, "nvstusb: SET_EYE timer ramp: enabled "
+                "base_us=%.3f rate_us_per_s=%+.3f limit_us=%.1f "
+                "(per-command r; independent of T2 frame reload; "
+                "optical phase NOT calibrated)\n",
+                base, rate_us_s, ctx->eye_timer_ramp_limit_us);
+      }
+    } else {
+      fprintf(stderr, "nvstusb: invalid NVSTUSB_EYE_TIMER_RAMP_US_PER_S='%s' "
+              "(allowed -20..20; disabled)\n", ramp_env);
     }
   }
 }
@@ -439,8 +519,37 @@ nvstusb_set_eye(
     printf("r:%08x %d %lld %lld\n",r, r,NVSTUSB_T0_US(r), NVSTUSB_T2_US(r));
   }
 #else
-  r = NVSTUSB_T2_COUNT(ctx->eye_timer_us >= 0 ?
+  if (ctx->eye_timer_ramp_rate_us_per_s != 0.0) {
+    struct timespec ts;
+    double base_us = ctx->eye_timer_us >= 0 ?
+                     ctx->eye_timer_us : (1e6 / ctx->rate) / 1.8;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+      int64_t now_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+      if (!ctx->eye_timer_ramp_started) {
+        ctx->eye_timer_ramp_start_ns = now_ns;
+        ctx->eye_timer_ramp_started = 1;
+      }
+      int64_t elapsed_ns = now_ns - ctx->eye_timer_ramp_start_ns;
+      if (elapsed_ns < 0) elapsed_ns = 0;
+      double adjusted_us = nvstusb_eye_timer_ramped_us(
+          base_us, elapsed_ns, ctx->eye_timer_ramp_rate_us_per_s,
+          ctx->eye_timer_ramp_limit_us, 1e6 / ctx->rate);
+      r = (uint32_t)nvstusb_eye_timer_command_count(adjusted_us);
+      ctx->eye_timer_ramp_last_us = adjusted_us;
+      ctx->eye_timer_ramp_packets++;
+      if (fabs((double)elapsed_ns / 1e9 *
+               ctx->eye_timer_ramp_rate_us_per_s) >=
+          ctx->eye_timer_ramp_limit_us)
+        ctx->eye_timer_ramp_limit_reached = 1;
+    } else {
+      // No usable monotonic clock: preserve the configured constant.
+      r = NVSTUSB_T2_COUNT(base_us);
+    }
+  } else {
+    // Keep the exact old arithmetic and packet bytes when ramp disabled.
+    r = NVSTUSB_T2_COUNT(ctx->eye_timer_us >= 0 ?
                          ctx->eye_timer_us : (1e6/ctx->rate)/1.8);
+  }
 #endif
 
   switch(eye) {
