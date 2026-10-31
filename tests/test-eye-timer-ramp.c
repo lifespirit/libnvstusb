@@ -44,7 +44,7 @@ int main(void)
     if (nvstusb_eye_timer_command_count(4629.0) != -55547 ||
         nvstusb_eye_timer_command_count(4630.0) != -55559 ||
         (uint32_t)nvstusb_eye_timer_command_count(4629.0) !=
-          UINT32_C(0xffff26fd)) {
+          UINT32_C(0xffff2705)) {
         fprintf(stderr, "FAIL SET_EYE raw 32-bit timer encoding\n");
         return EXIT_FAILURE;
     }
