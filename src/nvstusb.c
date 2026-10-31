@@ -78,6 +78,16 @@ struct nvstusb_context {
   double eye_timer_ramp_last_us;
   int eye_timer_ramp_limit_reached;
 
+  /* Diagnostic A/B inside one optical run: repeat 0/-step/0/+step/0.
+   * This is independent of the ramp and of the firmware frame reload. */
+  int eye_timer_step_us;
+  unsigned eye_timer_step_seconds;
+  int64_t eye_timer_step_start_ns;
+  int eye_timer_step_started;
+  int eye_timer_step_last_slot;
+  uint64_t eye_timer_step_packets;
+  uint64_t eye_timer_step_transitions;
+
   /* currently active eye */
   enum nvstusb_eye eye;
 
@@ -128,6 +138,13 @@ nvstusb_init(char const * fw)
   ctx->eye_timer_ramp_packets = 0;
   ctx->eye_timer_ramp_last_us = 0.0;
   ctx->eye_timer_ramp_limit_reached = 0;
+  ctx->eye_timer_step_us = 0;
+  ctx->eye_timer_step_seconds = 20;
+  ctx->eye_timer_step_start_ns = 0;
+  ctx->eye_timer_step_started = 0;
+  ctx->eye_timer_step_last_slot = -1;
+  ctx->eye_timer_step_packets = 0;
+  ctx->eye_timer_step_transitions = 0;
   ctx->eye = 0;
   ctx->device = dev;
   ctx->vblank_method = 0;
@@ -186,6 +203,16 @@ nvstusb_deinit(
 
   /* Report only AFTER streaming has stopped, never from the real-time
    * USB sender loop. No periodic logging, file writes, or printf on send. */
+  if (ctx->eye_timer_step_us != 0) {
+    fprintf(stderr, "nvstusb: SET_EYE step A/B final: "
+            "step_us=%d slot_seconds=%u packets=%llu "
+            "transitions=%llu final_slot=%d "
+            "(only SET_EYE command r; NOT measured optical phase)\n",
+            ctx->eye_timer_step_us, ctx->eye_timer_step_seconds,
+            (unsigned long long)ctx->eye_timer_step_packets,
+            (unsigned long long)ctx->eye_timer_step_transitions,
+            ctx->eye_timer_step_last_slot);
+  }
   if (ctx->eye_timer_ramp_rate_us_per_s != 0.0) {
     double base = ctx->eye_timer_us >= 0 ? ctx->eye_timer_us :
                   (1e6 / ctx->rate) / 1.8;
@@ -388,6 +415,13 @@ nvstusb_set_rate(
   ctx->eye_timer_ramp_packets = 0;
   ctx->eye_timer_ramp_last_us = 0.0;
   ctx->eye_timer_ramp_limit_reached = 0;
+  ctx->eye_timer_step_us = 0;
+  ctx->eye_timer_step_seconds = 20;
+  ctx->eye_timer_step_start_ns = 0;
+  ctx->eye_timer_step_started = 0;
+  ctx->eye_timer_step_last_slot = -1;
+  ctx->eye_timer_step_packets = 0;
+  ctx->eye_timer_step_transitions = 0;
   ctx->eye_timer_us = -1;
   const char *timer_override = getenv("NVSTUSB_EYE_TIMER_US");
   if (timer_override && *timer_override) {
@@ -444,6 +478,55 @@ nvstusb_set_rate(
     } else {
       fprintf(stderr, "nvstusb: invalid NVSTUSB_EYE_TIMER_RAMP_US_PER_S='%s' "
               "(allowed -20..20; disabled)\n", ramp_env);
+    }
+  }
+
+  /* Opt-in SAME-RUN fixed-r A/B. A changed base remains independent of
+   * initial Timer 2 frame reload, KMS and USB send scheduling. Do not run
+   * simultaneously with a SET_EYE ramp; reject that mixed experiment. */
+  const char *step_seconds_env = getenv("NVSTUSB_EYE_TIMER_STEP_SECONDS");
+  if (step_seconds_env && *step_seconds_env) {
+    char *end = NULL;
+    errno = 0;
+    long sec = strtol(step_seconds_env, &end, 10);
+    if (!errno && end != step_seconds_env && *end == '\0' &&
+        sec >= 5 && sec <= 60)
+      ctx->eye_timer_step_seconds = (unsigned)sec;
+    else
+      fprintf(stderr, "nvstusb: invalid NVSTUSB_EYE_TIMER_STEP_SECONDS='%s' "
+              "(allowed 5..60; default 20)\n", step_seconds_env);
+  }
+  const char *step_env = getenv("NVSTUSB_EYE_TIMER_STEP_US");
+  if (step_env && *step_env) {
+    char *end = NULL;
+    errno = 0;
+    long step = strtol(step_env, &end, 10);
+    if (!errno && end != step_env && *end == '\0' &&
+        step >= 0 && step <= 500) {
+      if (ctx->eye_timer_ramp_rate_us_per_s != 0.0 && step != 0) {
+        fprintf(stderr, "nvstusb: SET_EYE step A/B: incompatible with "
+                "NVSTUSB_EYE_TIMER_RAMP_US_PER_S; step disabled\n");
+      } else {
+        double base_us = ctx->eye_timer_us >= 0 ? ctx->eye_timer_us :
+                         (1e6 / ctx->rate) / 1.8;
+        int frame_us = (int)(1000000.0 / ctx->rate);
+        if (base_us - step < 500 || base_us + step > frame_us - 500) {
+          fprintf(stderr, "nvstusb: SET_EYE step A/B: base %.3fus "
+                  "+/- %ldus outside firmware-safe range, disabled\n",
+                  base_us, step);
+        } else {
+          ctx->eye_timer_step_us = (int)step;
+          if (step != 0)
+            fprintf(stderr, "nvstusb: SET_EYE step A/B: enabled "
+                    "base_us=%.3f step_us=%ld slot_seconds=%u "
+                    "sequence=0,-step,0,+step,0,repeat "
+                    "(constant r per slot; optical phase NOT measured)\n",
+                    base_us, step, ctx->eye_timer_step_seconds);
+        }
+      }
+    } else {
+      fprintf(stderr, "nvstusb: invalid NVSTUSB_EYE_TIMER_STEP_US='%s' "
+              "(allowed 0..500; disabled)\n", step_env);
     }
   }
 }
@@ -519,7 +602,33 @@ nvstusb_set_eye(
     printf("r:%08x %d %lld %lld\n",r, r,NVSTUSB_T0_US(r), NVSTUSB_T2_US(r));
   }
 #else
-  if (ctx->eye_timer_ramp_rate_us_per_s != 0.0) {
+  if (ctx->eye_timer_step_us != 0) {
+    struct timespec ts;
+    double base_us = ctx->eye_timer_us >= 0 ?
+                     ctx->eye_timer_us : (1e6 / ctx->rate) / 1.8;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+      int64_t now_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+      if (!ctx->eye_timer_step_started) {
+        ctx->eye_timer_step_start_ns = now_ns;
+        ctx->eye_timer_step_started = 1;
+      }
+      int64_t elapsed_ns = now_ns - ctx->eye_timer_step_start_ns;
+      if (elapsed_ns < 0) elapsed_ns = 0;
+      int slot = nvstusb_eye_timer_step_slot(
+          elapsed_ns, ctx->eye_timer_step_seconds);
+      double chosen_us = nvstusb_eye_timer_step_us(
+          base_us, elapsed_ns, ctx->eye_timer_step_us,
+          ctx->eye_timer_step_seconds, 1e6 / ctx->rate);
+      r = (uint32_t)nvstusb_eye_timer_command_count(chosen_us);
+      if (ctx->eye_timer_step_last_slot >= 0 &&
+          slot != ctx->eye_timer_step_last_slot)
+        ctx->eye_timer_step_transitions++;
+      ctx->eye_timer_step_last_slot = slot;
+      ctx->eye_timer_step_packets++;
+    } else {
+      r = NVSTUSB_T2_COUNT(base_us);
+    }
+  } else if (ctx->eye_timer_ramp_rate_us_per_s != 0.0) {
     struct timespec ts;
     double base_us = ctx->eye_timer_us >= 0 ?
                      ctx->eye_timer_us : (1e6 / ctx->rate) / 1.8;
